@@ -1,0 +1,24 @@
+Cần format cho data
+Cần xác định rõ ràng output
+
+Mục tiêu: Chatbot đào tạo
+- Cần:
+  + Câu hỏi, câu trả lời mẫu
+
+Dữ liệu gồm:
+- Question -> Ví dụ: Điểm tuyển sinh ngành CNTT là bao nhiêu?
+- Answer   -> Ví dụ: Điểm tuyển sinh của ngành CNTT là 23.5 (Không trả lời đơn thuần là 23.5) -> Câu trả lời phải đầy đủ chủ vị, ngữ nghĩa, in4
+- Context: + Chứa câu hỏi
+           + Chứa cả ngữ cảnh (câu hỏi và câu trả lời, câu trả lời áp dụng cho ngữ cảnh nào)
+- Catagory: + Wh-questions
+            + Maybe more
+- Độ khó: + Dễ
+          + Trung bình
+          + Khó
+
+Dữ liệu cần đủ cho (tỷ lệ 8-1-1) - Train
+                                 - Valid
+                                 - Test (quan trọng ở mức độ khó, mục tiêu trên 80%)
+
+
+Long, Hiếu: tập trung quy chế để sinh QA dataset

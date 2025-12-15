@@ -1,0 +1,9 @@
+V1.
+Crawl -> Lọc câu hỏi liên quan đến học tập -> Kéo LLM xử lý ngôn ngữ tự nhiên -> Xử lý chay -> Dataset
+
+V2.
+Kéo LLM xử lý ngôn ngữ tự nhiên -> Prompt đánh giá answer cho GPT
+
+(bổ sung ngoài luồng)
+Nếu lấy của trường khác
+Các câu hỏi phải mang tính học thuật
