@@ -4,6 +4,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 import re
 
 from urllib.parse import urlparse, parse_qs, urlencode
@@ -12,16 +13,16 @@ import random
 import json
 import time
 
+# =========================
+# ADDED: cấu hình số bài cần crawl (trước đây crawl_post chưa định nghĩa)
+# =========================
+crawl_post = 2000
+
 PAGE_URL = "https://www.facebook.com/profile.php?id=61555234277669"
 OUTPUT_FILE = "output/success_hnmu_posts_2.json"
 COOKIES_FILE = "cookies.json"
 
-# Số bài muốn crawl
-crawl_post = 2000
-
 # Map đúng expiry từ EditThisCookie (có trường 'expirationDate')
-
-
 def load_cookies(driver, cookies_file):
     with open(cookies_file, "r", encoding="utf-8") as f:
         cookies = json.load(f)
@@ -45,25 +46,52 @@ def load_cookies(driver, cookies_file):
             except Exception as e:
                 print(f"⚠️ Không thêm được cookie {cookie.get('name')}: {e}")
 
-
+# =========================
+# FIXED: indentation (hàm này trước đó bị thụt vào trong load_cookies)
+# + ADDED: click thêm “Xem bản dịch / See translation / Xem nguyên bản...”
+# =========================
 def expand_all_see_more(driver, post):
     try:
+        # Mở rộng caption
         see_more_btns = post.find_elements(
             By.XPATH,
-            ".//div[@role='button' and (contains(text(),'See more') or contains(text(),'Xem thêm'))]"
+            ".//div[@role='button' and (contains(.,'See more') or contains(.,'Xem thêm'))]"
         )
         for btn in see_more_btns:
-            driver.execute_script(
-                "arguments[0].scrollIntoView({block:'center'});", btn)
             try:
-                btn.click()
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                time.sleep(0.2)
+                try:
+                    btn.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", btn)
+                time.sleep(0.6)
             except Exception:
-                driver.execute_script("arguments[0].click();", btn)
-            time.sleep(0.6)
+                continue
+
+        # Mở rộng bản dịch / nguyên bản (nhiều bài nằm sau thao tác này)
+        translate_btns = post.find_elements(
+            By.XPATH,
+            ".//div[@role='button' and (contains(.,'Xem bản dịch') or contains(.,'See translation') or contains(.,'Xem nguyên bản') or contains(.,'See original'))]"
+        )
+        for btn in translate_btns:
+            try:
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                time.sleep(0.2)
+                try:
+                    btn.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", btn)
+                time.sleep(0.6)
+            except Exception:
+                continue
+
     except Exception:
         pass
 
-
+# =========================
+# FIXED: indentation (hàm này trước đó cũng bị thụt sai)
+# =========================
 def pick_post_link(post):
     # 1. Ưu tiên: link chứa timestamp (thường là permalink gốc)
     try:
@@ -134,13 +162,31 @@ def _is_noise(t: str) -> bool:
     return False
 
 
+# =========================
+# ADDED: Hàm helper lấy caption theo container ổn định
+# (KHÔNG xóa logic cũ; chỉ bổ sung fallback)
+# =========================
+def _extract_message_container_text(post):
+    msg_nodes = post.find_elements(By.CSS_SELECTOR, 'div[data-ad-preview="message"], div[data-ad-comet-preview="message"]')
+    if msg_nodes:
+        t = (msg_nodes[0].get_attribute("textContent") or "").strip()
+        return t
+
+    msg_nodes2 = post.find_elements(By.CSS_SELECTOR, 'div[data-ad-rendering-role="story_message"]')
+    if msg_nodes2:
+        t = (msg_nodes2[0].get_attribute("textContent") or "").strip()
+        return t
+
+    return ""
+
+
 def extract_post_text_segments(driver, post):
     expand_all_see_more(driver, post)
 
     segs = []
     selectors = [
-        "div.xdj266r.x14z9mp.xat24cr.x1lziwak.x1vvkbs",    # dòng đầu
-        "div.x14z9mp.xat24cr.x1lziwak.x1vvkbs.xtlvy1s"     # các dòng sau
+        "div.xdj266r.x14z9mp.xat24cr.x1lziwak.x1vvkbs.x126k92a",    # dòng đầu
+        "div.x14z9mp.xat24cr.x1lziwak.x1vvkbs.xtlvy1s.x126k92a"     # các dòng sau
     ]
 
     print(">>> Đang lấy text cho post...")
@@ -150,19 +196,49 @@ def extract_post_text_segments(driver, post):
         for el in els:
             print("----", (el.text or '').strip()[:80])
 
+    # ====== Logic cũ giữ nguyên ======
     for sel in selectors:
         for el in post.find_elements(By.CSS_SELECTOR, sel):
             try:
                 t = (el.get_attribute("textContent") or "").strip()
-                if t:
+                if t and not _is_noise(t):
                     segs.append(t)
             except Exception:
                 continue
 
+    # =========================
+    # ADDED: fallback bền vững hơn (container message)
+    # Nếu selector class không bắt được, vẫn lấy được caption
+    # =========================
+    if not segs:
+        t = _extract_message_container_text(post)
+        if t:
+            # Tách theo dòng để tương thích output segments
+            lines = [x.strip() for x in t.split("\n") if x.strip()]
+            for ln in lines:
+                if ln and not _is_noise(ln):
+                    segs.append(ln)
+
+    # =========================
+    # ADDED: fallback cuối (dir="auto" trong message container) để hạn chế miss do split node
+    # =========================
+    if not segs:
+        msg_nodes = post.find_elements(By.CSS_SELECTOR, 'div[data-ad-preview="message"], div[data-ad-comet-preview="message"], div[data-ad-rendering-role="story_message"]')
+        if msg_nodes:
+            container = msg_nodes[0]
+            for el in container.find_elements(By.CSS_SELECTOR, 'div[dir="auto"]'):
+                try:
+                    t = (el.get_attribute("textContent") or "").strip()
+                    if t and not _is_noise(t):
+                        segs.append(t)
+                except Exception:
+                    continue
+
     # Khử trùng lặp
     seen, uniq = set(), []
     for s in segs:
-        if s not in seen:
+        s = " ".join(s.split())  # ADDED: normalize whitespace để giảm duplicate do khoảng trắng
+        if s and s not in seen:
             seen.add(s)
             uniq.append(s)
     return uniq
@@ -177,7 +253,7 @@ def crawl_fanpage():
     options.add_experimental_option('useAutomationExtension', False)
 
     driver = webdriver.Chrome(service=Service(
-        "chromedriver-win64/chromedriver.exe"), options=options)
+        "../../chromedriver-win64/chromedriver.exe"), options=options)
 
     driver.get("https://www.facebook.com")
     WebDriverWait(driver, 20).until(
@@ -195,18 +271,35 @@ def crawl_fanpage():
     )
 
     # Cuộn để tải bài và chờ “ổn định”
-    prev = 0         # số bài đã load (0 ban đầu)
-    num_scroll = 1   # số lần cuộn, chỉnh theo nhu cầu
-    for _ in range(num_scroll):
+    prev = 0
+    cur = 0
+    # số lần chờ liên tiếp mà không load thêm bài (để thoát nếu hết bài)
+    max_wait = 5
+    stagnant = 0  # đếm số lần không load thêm bài mới
+
+    print(f"📜 Bắt đầu cuộn đến khi đủ {crawl_post} bài...")
+
+    while cur < crawl_post:
         driver.execute_script(
             "window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3 + random.random())
-        cur = len(driver.find_elements(By.CSS_SELECTOR,
-                  "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z"))
+
+        posts = driver.find_elements(
+            By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+        cur = len(posts)
+        print(f"🔽 Đã load {cur} bài...")
+
         if cur == prev:
-            # Nếu sau khi cuộn không tăng số bài post, chờ thêm chút cho FB load
-            time.sleep(1.0)
+            stagnant += 1
+            if stagnant >= max_wait:
+                print("⚠️ Không thấy bài mới nào sau nhiều lần cuộn, dừng lại.")
+                break
+            time.sleep(2)
+        else:
+            stagnant = 0  # reset nếu có bài mới
         prev = cur
+
+    print(f"✅ Tổng cộng đã load {cur} bài viết.")
 
     posts = driver.find_elements(
         By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
@@ -216,24 +309,49 @@ def crawl_fanpage():
 
     for post in posts[:crawl_post]:
         try:
+            # 1. Di chuyển đến bài viết để kích hoạt Facebook tải nội dung
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block:'center'});", post)
+            # 2. Chờ một chút để nội dung kịp tải về
+            time.sleep(0.7)
+
             permalink = clean_post_url(pick_post_link(post))
-            segs = extract_post_text_segments(driver, post)
+            segs = extract_post_text_segments(driver, post)  # Bây giờ mới trích xuất
+
+            # =========================
+            # CHANGED: Không bỏ qua bài khi không có text
+            # Mục tiêu của bạn là không bỏ sót bài => vẫn lưu record với text rỗng
+            # =========================
             if not segs:
-                continue
-            permalink = pick_post_link(post)
-            permalink = clean_post_url(permalink)
+                print("⚠️ Không tìm thấy text (có thể bài không có caption hoặc DOM khác). Vẫn lưu với post_text=''.")
+
             posts_data.append({
                 "index": len(posts_data) + 1,
                 "page_url": PAGE_URL,
                 "post_url": permalink or "N/A",
                 "segments": segs,
-                "post_text": "\n".join(segs)
+                "post_text": "\n".join(segs) if segs else ""
             })
-            # in thử 50 ký tự đầu:
             print("→", (segs[0] if segs else "")[:50], permalink)
+
         except Exception as e:
-            # Giữ vòng lặp chạy tiếp, không bỏ cả bài
             print("⚠️ Lỗi xử lý một bài:", e)
+            # ADDED: vẫn lưu “khung” để tránh mất bài hoàn toàn (tùy bạn; giữ đúng mục tiêu không bỏ sót)
+            try:
+                permalink = None
+                try:
+                    permalink = clean_post_url(pick_post_link(post))
+                except Exception:
+                    permalink = None
+                posts_data.append({
+                    "index": len(posts_data) + 1,
+                    "page_url": PAGE_URL,
+                    "post_url": permalink or "N/A",
+                    "segments": [],
+                    "post_text": ""
+                })
+            except Exception:
+                pass
             continue
 
     driver.quit()
