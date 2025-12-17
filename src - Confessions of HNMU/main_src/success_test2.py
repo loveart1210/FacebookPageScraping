@@ -19,7 +19,7 @@ import time
 crawl_post = 2000
 
 PAGE_URL = "https://www.facebook.com/profile.php?id=61555234277669"
-OUTPUT_FILE = "output/success_hnmu_posts_2.json"
+OUTPUT_FILE = "output/confessions_of_hnmu.json"
 COOKIES_FILE = "cookies.json"
 
 # Map đúng expiry từ EditThisCookie (có trường 'expirationDate')
@@ -271,94 +271,100 @@ def crawl_fanpage():
     )
 
     # Cuộn để tải bài và chờ “ổn định”
-    prev = 0
-    cur = 0
-    # số lần chờ liên tiếp mà không load thêm bài (để thoát nếu hết bài)
+    processed = 0
     max_wait = 5
-    stagnant = 0  # đếm số lần không load thêm bài mới
+    stagnant = 0
+    seen_urls = set()
 
-    print(f"📜 Bắt đầu cuộn đến khi đủ {crawl_post} bài...")
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("[\n")
+        first_item = True
 
-    while cur < crawl_post:
-        driver.execute_script(
-            "window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(3 + random.random())
+        print(f"📜 Bắt đầu cuộn và xử lý đến khi đủ {crawl_post} bài...")
 
-        posts = driver.find_elements(
-            By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
-        cur = len(posts)
-        print(f"🔽 Đã load {cur} bài...")
+        while processed < crawl_post:
+            posts = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+            cur = len(posts)
+            print(f"🔽 Đang thấy {cur} post trên DOM | đã lưu {processed}")
 
-        if cur == prev:
-            stagnant += 1
-            if stagnant >= max_wait:
-                print("⚠️ Không thấy bài mới nào sau nhiều lần cuộn, dừng lại.")
-                break
-            time.sleep(2)
-        else:
-            stagnant = 0  # reset nếu có bài mới
-        prev = cur
+            if cur <= processed:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(3 + random.random())
 
-    print(f"✅ Tổng cộng đã load {cur} bài viết.")
+                posts2 = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+                if len(posts2) <= cur:
+                    stagnant += 1
+                    if stagnant >= max_wait:
+                        print("⚠️ Không thấy post mới, dừng.")
+                        break
+                else:
+                    stagnant = 0
+                continue
 
-    posts = driver.find_elements(
-        By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
-    print(f"🔎 Tìm thấy {len(posts)} bài viết")
-
-    posts_data = []
-
-    for post in posts[:crawl_post]:
-        try:
-            # 1. Di chuyển đến bài viết để kích hoạt Facebook tải nội dung
-            driver.execute_script(
-                "arguments[0].scrollIntoView({block:'center'});", post)
-            # 2. Chờ một chút để nội dung kịp tải về
-            time.sleep(0.7)
-
-            permalink = clean_post_url(pick_post_link(post))
-            segs = extract_post_text_segments(driver, post)  # Bây giờ mới trích xuất
-
-            # =========================
-            # CHANGED: Không bỏ qua bài khi không có text
-            # Mục tiêu của bạn là không bỏ sót bài => vẫn lưu record với text rỗng
-            # =========================
-            if not segs:
-                print("⚠️ Không tìm thấy text (có thể bài không có caption hoặc DOM khác). Vẫn lưu với post_text=''.")
-
-            posts_data.append({
-                "index": len(posts_data) + 1,
-                "page_url": PAGE_URL,
-                "post_url": permalink or "N/A",
-                "segments": segs,
-                "post_text": "\n".join(segs) if segs else ""
-            })
-            print("→", (segs[0] if segs else "")[:50], permalink)
-
-        except Exception as e:
-            print("⚠️ Lỗi xử lý một bài:", e)
-            # ADDED: vẫn lưu “khung” để tránh mất bài hoàn toàn (tùy bạn; giữ đúng mục tiêu không bỏ sót)
-            try:
-                permalink = None
+            # xử lý các post mới xuất hiện
+            for i in range(processed, min(cur, crawl_post)):
                 try:
-                    permalink = clean_post_url(pick_post_link(post))
-                except Exception:
-                    permalink = None
-                posts_data.append({
-                    "index": len(posts_data) + 1,
-                    "page_url": PAGE_URL,
-                    "post_url": permalink or "N/A",
-                    "segments": [],
-                    "post_text": ""
-                })
-            except Exception:
-                pass
-            continue
+                    # refetch lại post theo index để giảm stale
+                    posts = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+                    post = posts[i]
+
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", post)
+                    time.sleep(0.7)
+
+                    permalink = clean_post_url(pick_post_link(post)) or "N/A"
+
+                    # chống trùng (do FB re-render)
+                    if permalink != "N/A" and permalink in seen_urls:
+                        continue
+                    if permalink != "N/A":
+                        seen_urls.add(permalink)
+
+                    segs = extract_post_text_segments(driver, post)
+                    if not segs:
+                        print("⚠️ Không tìm thấy text... vẫn lưu post_text=''")
+
+                    data = {
+                        "index": processed + 1,
+                        "page_url": PAGE_URL,
+                        "post_url": permalink,
+                        "segments": segs,
+                        "post_text": "\n".join(segs) if segs else ""
+                    }
+
+                    if not first_item:
+                        f.write(",\n")
+                    else:
+                        first_item = False
+                    f.write(json.dumps(data, ensure_ascii=False, indent=4))
+
+                    processed += 1
+
+                except Exception as e:
+                    print("⚠️ Lỗi xử lý một bài:", e)
+                    data = {
+                        "index": processed + 1,
+                        "page_url": PAGE_URL,
+                        "post_url": "N/A",
+                        "segments": [],
+                        "post_text": ""
+                    }
+                    if not first_item:
+                        f.write(",\n")
+                    else:
+                        first_item = False
+                    f.write(json.dumps(data, ensure_ascii=False, indent=4))
+                    processed += 1
+                    continue
+
+        f.write("\n]\n")
+        print(f"✅ Đã lưu {processed} bài viết vào {OUTPUT_FILE}")
 
     driver.quit()
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(posts_data, f, ensure_ascii=False, indent=4)
-    print(f"✅ Đã lưu {len(posts_data)} bài viết vào {OUTPUT_FILE}")
+    # with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    #     json.dump(posts_data, f, ensure_ascii=False, indent=4)
+    # print(f"✅ Đã lưu {len(posts_data)} bài viết vào {OUTPUT_FILE}")
+
 
 
 if __name__ == "__main__":
