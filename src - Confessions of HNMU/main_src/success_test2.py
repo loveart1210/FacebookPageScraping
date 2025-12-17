@@ -4,8 +4,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.client_config import ClientConfig
 from webdriver_manager.chrome import ChromeDriverManager
-import re
+import re, os
 
 from urllib.parse import urlparse, parse_qs, urlencode
 
@@ -13,16 +14,15 @@ import random
 import json
 import time
 
-# =========================
-# ADDED: cấu hình số bài cần crawl (trước đây crawl_post chưa định nghĩa)
-# =========================
-crawl_post = 2000
-
 PAGE_URL = "https://www.facebook.com/profile.php?id=61555234277669"
-OUTPUT_FILE = "output/confessions_of_hnmu.json"
+OUTPUT_JSONL_FILE = "output/2_confessions_of_hnmu.jsonl"   # output chính (JSONL)
+OUTPUT_JSON_FILE  = "output/2_confessions_of_hnmu.json"    # file JSON array sau khi convert
+CHECKPOINT_FILE   = "output/2_checkpoint_hnmu.json"
 COOKIES_FILE = "cookies.json"
 
-# Map đúng expiry từ EditThisCookie (có trường 'expirationDate')
+# Số bài muốn crawl
+crawl_post = 3000
+
 def load_cookies(driver, cookies_file):
     with open(cookies_file, "r", encoding="utf-8") as f:
         cookies = json.load(f)
@@ -46,10 +46,7 @@ def load_cookies(driver, cookies_file):
             except Exception as e:
                 print(f"⚠️ Không thêm được cookie {cookie.get('name')}: {e}")
 
-# =========================
-# FIXED: indentation (hàm này trước đó bị thụt vào trong load_cookies)
-# + ADDED: click thêm “Xem bản dịch / See translation / Xem nguyên bản...”
-# =========================
+
 def expand_all_see_more(driver, post):
     try:
         # Mở rộng caption
@@ -89,9 +86,6 @@ def expand_all_see_more(driver, post):
     except Exception:
         pass
 
-# =========================
-# FIXED: indentation (hàm này trước đó cũng bị thụt sai)
-# =========================
 def pick_post_link(post):
     # 1. Ưu tiên: link chứa timestamp (thường là permalink gốc)
     try:
@@ -125,7 +119,6 @@ def pick_post_link(post):
     any_a = post.find_elements(By.XPATH, './/a[@href]')
     return any_a[0].get_attribute('href') if any_a else None
 
-
 def clean_post_url(url):
     if not url:
         return url
@@ -137,13 +130,24 @@ def clean_post_url(url):
     q = urlencode(qs, doseq=True)
     return f"{p.scheme}://{p.netloc}{p.path}" + (f"?{q}" if q else "")
 
+def save_checkpoint(processed, seen_urls):
+    os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
+    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
+        json.dump({"processed": int(processed), "seen_urls": list(seen_urls)}, f, ensure_ascii=False)
 
+def load_checkpoint():
+    try:
+        with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+            return int(d.get("processed", 0)), set(d.get("seen_urls", []))
+    except Exception:
+        return 0, set()
+    
 NOISE_WORDS = {
     "like", "reply", "share", "comment", "send", "follow",
     "thích", "trả lời", "chia sẻ", "bình luận", "gửi", "theo dõi", "phản hồi"
 }
 TIME_RE = re.compile(r"^\d+\s*(s|m|h|d|w|y)$", re.I)
-
 
 def _is_noise(t: str) -> bool:
     s = t.strip()
@@ -161,11 +165,6 @@ def _is_noise(t: str) -> bool:
         return True
     return False
 
-
-# =========================
-# ADDED: Hàm helper lấy caption theo container ổn định
-# (KHÔNG xóa logic cũ; chỉ bổ sung fallback)
-# =========================
 def _extract_message_container_text(post):
     msg_nodes = post.find_elements(By.CSS_SELECTOR, 'div[data-ad-preview="message"], div[data-ad-comet-preview="message"]')
     if msg_nodes:
@@ -178,7 +177,6 @@ def _extract_message_container_text(post):
         return t
 
     return ""
-
 
 def extract_post_text_segments(driver, post):
     expand_all_see_more(driver, post)
@@ -243,47 +241,75 @@ def extract_post_text_segments(driver, post):
             uniq.append(s)
     return uniq
 
-
-def crawl_fanpage():
+def build_driver():
     options = Options()
     options.add_argument("--disable-notifications")
     options.add_argument("--start-maximized")
-    # Tuỳ chọn giảm nghi ngờ bot (không bắt buộc)
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
+    options.add_experimental_option("useAutomationExtension", False)
 
-    driver = webdriver.Chrome(service=Service(
-        "../../chromedriver-win64/chromedriver.exe"), options=options)
+    # Giảm tải: tắt ảnh, hạn chế autoplay
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,
+        "profile.default_content_setting_values.notifications": 2,
+        "autoplay-policy": "document-user-activation-required",
+    }
+    options.add_experimental_option("prefs", prefs)
+    options.add_argument("--disable-gpu")
 
-    driver.get("https://www.facebook.com")
-    WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body")))
-    load_cookies(driver, COOKIES_FILE)
-    driver.refresh()
-    WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body")))
+    # Tăng timeout command Selenium ↔ ChromeDriver (Selenium 4.38)
+    client_config = ClientConfig(timeout=300)
 
-    # Vào fanpage
-    driver.get(PAGE_URL)
-    WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (By.CSS_SELECTOR, "div[role='feed'], div[role='main']"))
+    driver = webdriver.Chrome(
+        service=Service("../../chromedriver-win64/chromedriver.exe"),
+        options=options,
+        client_config=client_config
     )
 
+    driver.get("https://www.facebook.com")
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+    load_cookies(driver, COOKIES_FILE)
+    driver.refresh()
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+    driver.get(PAGE_URL)
+    WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='feed'], div[role='main']"))
+    )
+    return driver
+
+def crawl_fanpage():
+    processed, seen_urls = load_checkpoint()
+    driver = build_driver()
+
     # Cuộn để tải bài và chờ “ổn định”
-    processed = 0
     max_wait = 5
     stagnant = 0
-    seen_urls = set()
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write("[\n")
-        first_item = True
+    os.makedirs(os.path.dirname(OUTPUT_JSONL_FILE), exist_ok=True)
 
-        print(f"📜 Bắt đầu cuộn và xử lý đến khi đủ {crawl_post} bài...")
+    mode = "a" if (processed > 0 and os.path.exists(OUTPUT_JSONL_FILE)) else "w"
+    with open(OUTPUT_JSONL_FILE, mode, encoding="utf-8") as f:
+        print(f"📜 Bắt đầu cuộn và xử lý đến khi đủ {crawl_post} bài... (resume={processed})")
 
         while processed < crawl_post:
-            posts = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+            # --- TIMEOUT SELF-HEAL: nếu find_elements bị Read timed out thì restart ---
+            try:
+                posts = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+            except Exception as e:
+                msg = str(e).lower()
+                if "read timed out" in msg or "httppool" in msg:
+                    print("⚠️ ChromeDriver timeout. Restart và resume...")
+                    save_checkpoint(processed, seen_urls)
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                    driver = None
+                    driver = build_driver()
+                    continue
+                raise
+
             cur = len(posts)
             print(f"🔽 Đang thấy {cur} post trên DOM | đã lưu {processed}")
 
@@ -292,7 +318,8 @@ def crawl_fanpage():
                 time.sleep(3 + random.random())
 
                 posts2 = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
-                if len(posts2) <= cur:
+                cur2 = len(posts2)
+                if cur2 <= cur:
                     stagnant += 1
                     if stagnant >= max_wait:
                         print("⚠️ Không thấy post mới, dừng.")
@@ -301,11 +328,12 @@ def crawl_fanpage():
                     stagnant = 0
                 continue
 
-            # xử lý các post mới xuất hiện
             for i in range(processed, min(cur, crawl_post)):
                 try:
-                    # refetch lại post theo index để giảm stale
+                    # refetch theo index để giảm stale
                     posts = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
+                    if i >= len(posts):
+                        break
                     post = posts[i]
 
                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", post)
@@ -313,8 +341,9 @@ def crawl_fanpage():
 
                     permalink = clean_post_url(pick_post_link(post)) or "N/A"
 
-                    # chống trùng (do FB re-render)
+                    # chống trùng do FB re-render
                     if permalink != "N/A" and permalink in seen_urls:
+                        processed += 1
                         continue
                     if permalink != "N/A":
                         seen_urls.add(permalink)
@@ -331,13 +360,26 @@ def crawl_fanpage():
                         "post_text": "\n".join(segs) if segs else ""
                     }
 
-                    if not first_item:
-                        f.write(",\n")
-                    else:
-                        first_item = False
-                    f.write(json.dumps(data, ensure_ascii=False, indent=4))
+                    # --- JSONL: mỗi dòng 1 JSON object ---
+                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
+                    f.flush()
+
+                    # --- dọn DOM để giảm RAM/đơ ---
+                    try:
+                        driver.execute_script("arguments[0].remove();", post)
+                    except Exception:
+                        pass
 
                     processed += 1
+
+                    # checkpoint mỗi 10 bài
+                    if processed % 10 == 0:
+                        save_checkpoint(processed, seen_urls)
+                        try:
+                            f.flush()
+                            os.fsync(f.fileno())
+                        except Exception:
+                            pass
 
                 except Exception as e:
                     print("⚠️ Lỗi xử lý một bài:", e)
@@ -348,24 +390,40 @@ def crawl_fanpage():
                         "segments": [],
                         "post_text": ""
                     }
-                    if not first_item:
-                        f.write(",\n")
-                    else:
-                        first_item = False
-                    f.write(json.dumps(data, ensure_ascii=False, indent=4))
+                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
+                    f.flush()
+
                     processed += 1
+                    if processed % 10 == 0:
+                        save_checkpoint(processed, seen_urls)
+                        try:
+                            f.flush()
+                            os.fsync(f.fileno())
+                        except Exception:
+                            pass
                     continue
 
-        f.write("\n]\n")
-        print(f"✅ Đã lưu {processed} bài viết vào {OUTPUT_FILE}")
+        save_checkpoint(processed, seen_urls)
+        print(f"✅ Đã lưu {processed} bài viết vào {OUTPUT_JSONL_FILE}")
+
 
     driver.quit()
 
-    # with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-    #     json.dump(posts_data, f, ensure_ascii=False, indent=4)
-    # print(f"✅ Đã lưu {len(posts_data)} bài viết vào {OUTPUT_FILE}")
+def jsonl_to_json(jsonl_path=OUTPUT_JSONL_FILE, json_path=OUTPUT_JSON_FILE):
+    items = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            items.append(json.loads(line))
 
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=4)
 
+    print(f"✅ Convert xong: {len(items)} records -> {json_path}")
 
 if __name__ == "__main__":
     crawl_fanpage()
+    jsonl_to_json()
