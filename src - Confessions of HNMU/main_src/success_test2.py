@@ -4,6 +4,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.client_config import ClientConfig
 from webdriver_manager.chrome import ChromeDriverManager
 import re, os
@@ -292,6 +294,8 @@ def crawl_fanpage():
     with open(OUTPUT_JSONL_FILE, mode, encoding="utf-8") as f:
         print(f"📜 Bắt đầu cuộn và xử lý đến khi đủ {crawl_post} bài... (resume={processed})")
 
+        last_height = driver.execute_script("return document.body.scrollHeight")
+
         while processed < crawl_post:
             # --- TIMEOUT SELF-HEAL: nếu find_elements bị Read timed out thì restart ---
             try:
@@ -314,18 +318,21 @@ def crawl_fanpage():
             print(f"🔽 Đang thấy {cur} post trên DOM | đã lưu {processed}")
 
             if cur <= processed:
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(3 + random.random())
+                for _ in range(8):
+                    ActionChains(driver).send_keys(Keys.PAGE_DOWN).perform()
+                    time.sleep(0.2)
 
-                posts2 = driver.find_elements(By.CSS_SELECTOR, "div.x1yztbdb.x1n2onr6.xh8yej3.x1ja2u2z")
-                cur2 = len(posts2)
-                if cur2 <= cur:
+                time.sleep(2 + random.random())
+
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                if new_height <= last_height:
                     stagnant += 1
                     if stagnant >= max_wait:
-                        print("⚠️ Không thấy post mới, dừng.")
+                        print("⚠️ Không thấy nội dung mới (scrollHeight không tăng), dừng.")
                         break
                 else:
                     stagnant = 0
+                    last_height = new_height
                 continue
 
             for i in range(processed, min(cur, crawl_post)):
@@ -364,11 +371,11 @@ def crawl_fanpage():
                     f.write(json.dumps(data, ensure_ascii=False) + "\n")
                     f.flush()
 
-                    # --- dọn DOM để giảm RAM/đơ ---
-                    try:
-                        driver.execute_script("arguments[0].remove();", post)
-                    except Exception:
-                        pass
+                    # # --- dọn DOM để giảm RAM/đơ --- (tạm tắt remove để kiểm chứng xem còn dừng scraping sớm hay không)
+                    # try:
+                    #     driver.execute_script("arguments[0].remove();", post)
+                    # except Exception:
+                    #     pass
 
                     processed += 1
 
@@ -405,7 +412,6 @@ def crawl_fanpage():
 
         save_checkpoint(processed, seen_urls)
         print(f"✅ Đã lưu {processed} bài viết vào {OUTPUT_JSONL_FILE}")
-
 
     driver.quit()
 

@@ -1,7 +1,7 @@
 [
 {
     "domain": ".facebook.com",
-    "expirationDate": 1794911236.303399,
+    "expirationDate": 1797492063.858702,
     "hostOnly": false,
     "httpOnly": false,
     "name": "c_user",
@@ -29,7 +29,7 @@
 },
 {
     "domain": ".facebook.com",
-    "expirationDate": 1763980036,
+    "expirationDate": 1766561721,
     "hostOnly": false,
     "httpOnly": false,
     "name": "dpr",
@@ -43,7 +43,7 @@
 },
 {
     "domain": ".facebook.com",
-    "expirationDate": 1771151236.303583,
+    "expirationDate": 1773732917.79237,
     "hostOnly": false,
     "httpOnly": true,
     "name": "fr",
@@ -52,7 +52,7 @@
     "secure": true,
     "session": false,
     "storeId": "0",
-    "value": "1i4yNPuQ4NBwbE4fi.AWdEeQstX8ozpcuCMNjpYFOBz8oyHXnbQEvjIu_uSJB0p3yynag.BpGviE..AAA.0.0.BpGviE.AWf0eqTBg4oCuKheMAujOR-F0W8",
+    "value": "1t7NrQQHCW7PSMplD.AWfF5tJFjys51zfuRwDf10Dh2pJNXT9RpBT-s3AXW7g421PNyuY.BpQlng..AAA.0.0.BpQl02.AWcPprc7pm0Ii_iIAxZqOAvkIUU",
     "id": 4
 },
 {
@@ -65,7 +65,7 @@
     "secure": true,
     "session": true,
     "storeId": "0",
-    "value": "C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1763375236079%2C%22v%22%3A1%7D",
+    "value": "C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1765956921536%2C%22v%22%3A1%7D",
     "id": 5
 },
 {
@@ -98,7 +98,7 @@
 },
 {
     "domain": ".facebook.com",
-    "expirationDate": 1797930463.456714,
+    "expirationDate": 1800516062.767482,
     "hostOnly": false,
     "httpOnly": true,
     "name": "sb",
@@ -112,7 +112,7 @@
 },
 {
     "domain": ".facebook.com",
-    "expirationDate": 1763980036,
+    "expirationDate": 1766561721,
     "hostOnly": false,
     "httpOnly": false,
     "name": "wd",
@@ -126,7 +126,7 @@
 },
 {
     "domain": ".facebook.com",
-    "expirationDate": 1794911236.303683,
+    "expirationDate": 1797492063.858859,
     "hostOnly": false,
     "httpOnly": true,
     "name": "xs",
@@ -135,7 +135,7 @@
     "secure": true,
     "session": false,
     "storeId": "0",
-    "value": "13%3AZNvVPQYcvLiKBQ%3A2%3A1763370461%3A-1%3A-1%3A%3AAcypaCALw6LSebve4qd4sCPbMxUYwNlDl_cQUGxmGQ",
+    "value": "21%3AADsbdYWUXzinAw%3A2%3A1765956061%3A-1%3A-1%3A%3AAczJFWR9goODO26ik_fxPQAtm8vrc-30KoruEpNmAw",
     "id": 10
 }
 ]
